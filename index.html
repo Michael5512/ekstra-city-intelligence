@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ekstra — City Intelligence</title>
+
+  <!-- Leaflet Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ── TOKENS ───────────────────────────────────────────────── */
+    :root {
+      --bg:        #080a0f;
+      --surface:   #0d1017;
+      --panel:     #111520;
+      --border:    rgba(255,255,255,0.06);
+      --border-hi: rgba(99,220,255,0.25);
+      --cyan:      #63dcff;
+      --cyan-dim:  rgba(99,220,255,0.12);
+      --magenta:   #c47bff;
+      --mag-dim:   rgba(196,123,255,0.10);
+      --orange:    #ff7c3a;
+      --green:     #2dffb4;
+      --red:       #ff4b6e;
+      --text:      #e8edf5;
+      --muted:     #5a6478;
+      --font-head: 'Syne', sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    /* ── RESET ────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: var(--font-head); }
+
+    /* ── SCAN-LINE OVERLAY ───────────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: 9999; pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.07) 2px,
+        rgba(0,0,0,0.07) 4px
+      );
+    }
+
+    /* ── LAYOUT ───────────────────────────────────────────────── */
+    #app {
+      display: grid;
+      grid-template-columns: 280px 1fr 300px;
+      grid-template-rows: 56px 1fr 80px;
+      height: 100vh;
+      gap: 0;
+    }
+
+    /* ── HEADER ───────────────────────────────────────────────── */
+    header {
+      grid-column: 1 / -1;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      position: relative;
+      z-index: 10;
+    }
+    .logo {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 15px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .logo-mark {
+      width: 28px; height: 28px;
+      background: linear-gradient(135deg, var(--cyan), var(--magenta));
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 800; color: #000;
+    }
+    .header-center {
+      position: absolute; left: 50%; transform: translateX(-50%);
+      font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+      letter-spacing: 0.12em; text-transform: uppercase;
+      display: flex; align-items: center; gap: 16px;
+    }
+    .pulse-dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+      animation: pulse 2s ease-in-out infinite;
+      display: inline-block;
+    }
+    @keyframes pulse {
+      0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(45,255,180,0.4); }
+      50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(45,255,180,0); }
+    }
+    .header-time {
+      font-family: var(--font-mono); font-size: 11px; color: var(--cyan);
+      letter-spacing: 0.08em;
+    }
+
+    /* ── LEFT PANEL ───────────────────────────────────────────── */
+    #left-panel {
+      grid-row: 2;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      display: flex; flex-direction: column; gap: 0;
+    }
+    #left-panel::-webkit-scrollbar { width: 3px; }
+    #left-panel::-webkit-scrollbar-track { background: transparent; }
+    #left-panel::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
+
+    /* ── RIGHT PANEL ──────────────────────────────────────────── */
+    #right-panel {
+      grid-row: 2;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      overflow-y: auto;
+      display: flex; flex-direction: column; gap: 0;
+    }
+    #right-panel::-webkit-scrollbar { width: 3px; }
+    #right-panel::-webkit-scrollbar-track { background: transparent; }
+    #right-panel::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
+
+    /* ── MAP ──────────────────────────────────────────────────── */
+    #map-container {
+      grid-row: 2;
+      position: relative;
+      overflow: hidden;
+    }
+    #map { width: 100%; height: 100%; }
+
+    /* Map dark override */
+    .leaflet-tile { filter: invert(1) hue-rotate(180deg) saturate(0.4) brightness(0.7); }
+    .leaflet-container { background: var(--bg); }
+    .leaflet-control-attribution { display: none; }
+    .leaflet-control-zoom a {
+      background: var(--panel) !important;
+      color: var(--cyan) !important;
+      border-color: var(--border) !important;
+    }
+
+    /* Map gradient overlay edges */
+    #map-container::after {
+      content: '';
+      position: absolute; inset: 0; pointer-events: none; z-index: 400;
+      background:
+        linear-gradient(to right, var(--surface) 0px, transparent 40px),
+        linear-gradient(to left, var(--surface) 0px, transparent 40px),
+        linear-gradient(to bottom, var(--surface) 0px, transparent 30px),
+        linear-gradient(to top, var(--bg) 0px, transparent 60px);
+    }
+
+    /* ── FOOTER ───────────────────────────────────────────────── */
+    footer {
+      grid-column: 1 / -1;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 24px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+    }
+    #fact-ticker {
+      font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+      overflow: hidden; white-space: nowrap;
+      flex: 1; margin: 0 32px;
+      position: relative;
+    }
+    #fact-text {
+      display: inline-block;
+      animation: ticker 30s linear infinite;
+    }
+    @keyframes ticker {
+      0% { transform: translateX(100%); }
+      100% { transform: translateX(-100%); }
+    }
+    .footer-stat {
+      font-family: var(--font-mono); font-size: 10px; color: var(--muted);
+      letter-spacing: 0.1em; text-transform: uppercase;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .footer-stat span { color: var(--cyan); font-weight: 500; }
+
+    /* ── PANEL BLOCKS ─────────────────────────────────────────── */
+    .panel-section {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .panel-label {
+      font-family: var(--font-mono); font-size: 9px;
+      letter-spacing: 0.18em; text-transform: uppercase;
+      color: var(--muted); margin-bottom: 12px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .panel-label::after {
+      content: ''; flex: 1; height: 1px; background: var(--border);
+    }
+
+    /* ── STATS GRID ───────────────────────────────────────────── */
+    .stats-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    }
+    .stat-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s;
+    }
+    .stat-card:hover { border-color: var(--border-hi); }
+    .stat-card::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .stat-card:hover::before { opacity: 1; }
+    .stat-val {
+      font-size: 22px; font-weight: 800; color: var(--cyan);
+      line-height: 1; margin-bottom: 4px;
+      font-family: var(--font-mono);
+    }
+    .stat-val.orange { color: var(--orange); }
+    .stat-val.magenta { color: var(--magenta); }
+    .stat-val.green { color: var(--green); }
+    .stat-key {
+      font-family: var(--font-mono); font-size: 9px;
+      color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase;
+    }
+
+    /* ── DEVICE LIST ──────────────────────────────────────────── */
+    .device-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.2s;
+      border-radius: 4px;
+    }
+    .device-item:last-child { border-bottom: none; }
+    .device-item:hover { background: var(--cyan-dim); padding: 10px 6px; }
+    .device-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .device-dot.camera { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+    .device-dot.screen { background: var(--magenta); box-shadow: 0 0 6px var(--magenta); }
+    .device-dot.phone_imu { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+    .device-dot.default { background: var(--muted); }
+    .device-info { flex: 1; min-width: 0; }
+    .device-name {
+      font-size: 12px; font-weight: 600; color: var(--text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .device-loc {
+      font-family: var(--font-mono); font-size: 9px; color: var(--muted);
+      margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .device-trust {
+      font-family: var(--font-mono); font-size: 9px; color: var(--green);
+      flex-shrink: 0;
+    }
+
+    /* ── CURB RULES LIST ──────────────────────────────────────── */
+    .rule-item {
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 8px;
+      background: var(--panel);
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+    .rule-item:hover { border-color: var(--border-hi); }
+    .rule-item.active { border-left: 2px solid var(--red); }
+    .rule-item.inactive { border-left: 2px solid var(--green); }
+    .rule-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 4px;
+    }
+    .rule-kind {
+      font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.12em;
+      text-transform: uppercase; font-weight: 500;
+    }
+    .rule-kind.active { color: var(--red); }
+    .rule-kind.inactive { color: var(--green); }
+    .rule-badge {
+      font-family: var(--font-mono); font-size: 8px;
+      padding: 2px 6px; border-radius: 3px; font-weight: 500;
+    }
+    .rule-badge.active { background: rgba(255,75,110,0.15); color: var(--red); }
+    .rule-badge.inactive { background: rgba(45,255,180,0.12); color: var(--green); }
+    .rule-text {
+      font-size: 11px; color: var(--text); margin-bottom: 4px; line-height: 1.4;
+    }
+    .rule-countdown {
+      font-family: var(--font-mono); font-size: 9px; color: var(--muted);
+    }
+    .rule-countdown span { color: var(--cyan); }
+
+    /* ── SEARCH BAR ───────────────────────────────────────────── */
+    .search-wrap {
+      display: flex; gap: 8px; align-items: center;
+    }
+    .coord-input {
+      flex: 1;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 6px; padding: 8px 10px;
+      font-family: var(--font-mono); font-size: 11px; color: var(--text);
+      outline: none; transition: border-color 0.2s;
+    }
+    .coord-input:focus { border-color: var(--border-hi); }
+    .coord-input::placeholder { color: var(--muted); }
+    .search-btn {
+      background: linear-gradient(135deg, var(--cyan), var(--magenta));
+      border: none; border-radius: 6px; padding: 8px 14px;
+      font-family: var(--font-mono); font-size: 10px; font-weight: 500;
+      color: #000; cursor: pointer; letter-spacing: 0.08em; text-transform: uppercase;
+      transition: opacity 0.2s;
+    }
+    .search-btn:hover { opacity: 0.85; }
+
+    /* ── RADIUS CONTROL ───────────────────────────────────────── */
+    .radius-row {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-top: 10px;
+    }
+    .radius-label {
+      font-family: var(--font-mono); font-size: 9px; color: var(--muted);
+      letter-spacing: 0.1em; text-transform: uppercase;
+    }
+    .radius-val { color: var(--cyan); }
+    input[type=range] {
+      -webkit-appearance: none; appearance: none;
+      width: 120px; height: 2px;
+      background: var(--border); border-radius: 2px; outline: none;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 12px; height: 12px; border-radius: 50%;
+      background: var(--cyan); cursor: pointer;
+      box-shadow: 0 0 8px var(--cyan);
+    }
+
+    /* ── MAP POPUP CUSTOM ─────────────────────────────────────── */
+    .leaflet-popup-content-wrapper {
+      background: var(--panel) !important;
+      border: 1px solid var(--border-hi) !important;
+      border-radius: 8px !important;
+      color: var(--text) !important;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6) !important;
+    }
+    .leaflet-popup-tip { background: var(--panel) !important; }
+    .leaflet-popup-content { margin: 12px 14px !important; font-family: var(--font-mono); font-size: 11px; }
+    .leaflet-popup-close-button { color: var(--muted) !important; }
+
+    /* ── LOADING STATE ────────────────────────────────────────── */
+    .loading-dots::after {
+      content: '...';
+      animation: dots 1.5s steps(4, end) infinite;
+    }
+    @keyframes dots {
+      0%, 20% { content: '.'; }
+      40% { content: '..'; }
+      60% { content: '...'; }
+      80%, 100% { content: ''; }
+    }
+
+    /* ── EMPTY STATE ──────────────────────────────────────────── */
+    .empty-state {
+      text-align: center; padding: 24px 16px;
+      font-family: var(--font-mono); font-size: 10px; color: var(--muted);
+      letter-spacing: 0.08em;
+    }
+    .empty-icon { font-size: 24px; margin-bottom: 8px; opacity: 0.4; }
+
+    /* ── TYPE FILTER ──────────────────────────────────────────── */
+    .type-filters {
+      display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;
+    }
+    .type-chip {
+      font-family: var(--font-mono); font-size: 9px;
+      padding: 4px 10px; border-radius: 20px;
+      border: 1px solid var(--border); background: var(--panel);
+      color: var(--muted); cursor: pointer;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      transition: all 0.2s;
+    }
+    .type-chip.active-chip { color: #000; border-color: transparent; }
+    .type-chip.camera.active-chip { background: var(--cyan); }
+    .type-chip.screen.active-chip { background: var(--magenta); }
+    .type-chip.phone.active-chip { background: var(--orange); }
+    .type-chip.all.active-chip { background: var(--green); }
+
+    /* ── ANIMATE IN ───────────────────────────────────────────── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .panel-section { animation: fadeUp 0.5s ease both; }
+    #left-panel .panel-section:nth-child(1) { animation-delay: 0.05s; }
+    #left-panel .panel-section:nth-child(2) { animation-delay: 0.10s; }
+    #left-panel .panel-section:nth-child(3) { animation-delay: 0.15s; }
+    #right-panel .panel-section:nth-child(1) { animation-delay: 0.10s; }
+    #right-panel .panel-section:nth-child(2) { animation-delay: 0.18s; }
+    #right-panel .panel-section:nth-child(3) { animation-delay: 0.26s; }
+
+    /* ── GLOW RING on map center ───────────────────────────────── */
+    .map-crosshair {
+      position: absolute; top: 50%; left: 50%; z-index: 500;
+      transform: translate(-50%, -50%); pointer-events: none;
+      width: 20px; height: 20px;
+    }
+    .map-crosshair::before, .map-crosshair::after {
+      content: ''; position: absolute; border-radius: 50%;
+      top: 50%; left: 50%; transform: translate(-50%, -50%);
+    }
+    .map-crosshair::before {
+      width: 6px; height: 6px;
+      background: var(--cyan); box-shadow: 0 0 10px var(--cyan);
+    }
+    .map-crosshair::after {
+      width: 20px; height: 20px;
+      border: 1px solid rgba(99,220,255,0.4);
+      animation: ring-pulse 2.5s ease-out infinite;
+    }
+    @keyframes ring-pulse {
+      0% { transform: translate(-50%,-50%) scale(0.6); opacity: 1; }
+      100% { transform: translate(-50%,-50%) scale(2.5); opacity: 0; }
+    }
+
+    /* ── SCROLLBAR GLOBAL ─────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── HEADER ─────────────────────────────────────────────── -->
+  <header>
+    <div class="logo">
+      <div class="logo-mark">E</div>
+      EKSTRA <span style="color:var(--muted);font-weight:400;margin-left:2px">/ City Intelligence</span>
+    </div>
+    <div class="header-center">
+      <span class="pulse-dot"></span>
+      LIVE NETWORK — DATA SURFACE
+    </div>
+    <div class="header-time" id="clock">--:--:--</div>
+  </header>
+
+  <!-- ── LEFT PANEL ─────────────────────────────────────────── -->
+  <aside id="left-panel">
+
+    <!-- Network Stats -->
+    <div class="panel-section">
+      <div class="panel-label">Network Stats</div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-val" id="stat-devices">—</div>
+          <div class="stat-key">Active Devices</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val orange" id="stat-operators">—</div>
+          <div class="stat-key">Operators</div>
+        </div>
+        <div class="stat-card" style="grid-column:1/-1">
+          <div class="stat-val magenta" id="stat-packets" style="font-size:16px">—</div>
+          <div class="stat-key">Total Packets Processed</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Device Type Filter -->
+    <div class="panel-section">
+      <div class="panel-label">Filter Devices</div>
+      <div class="type-filters">
+        <div class="type-chip all active-chip" data-filter="all" onclick="filterDevices('all', this)">All</div>
+        <div class="type-chip camera" data-filter="camera" onclick="filterDevices('camera', this)">Camera</div>
+        <div class="type-chip screen" data-filter="screen" onclick="filterDevices('screen', this)">Screen</div>
+        <div class="type-chip phone" data-filter="phone_imu" onclick="filterDevices('phone_imu', this)">Phone IMU</div>
+      </div>
+    </div>
+
+    <!-- Live Devices -->
+    <div class="panel-section" style="flex:1">
+      <div class="panel-label">Live Devices</div>
+      <div id="device-list">
+        <div class="empty-state">
+          <div class="loading-dots">Loading</div>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ── MAP ────────────────────────────────────────────────── -->
+  <main id="map-container">
+    <div id="map"></div>
+    <div class="map-crosshair"></div>
+  </main>
+
+  <!-- ── RIGHT PANEL ────────────────────────────────────────── -->
+  <aside id="right-panel">
+
+    <!-- Curb Rules Search -->
+    <div class="panel-section">
+      <div class="panel-label">Curb Rules Query</div>
+      <div class="search-wrap">
+        <input class="coord-input" id="lat-input" placeholder="Lat: 40.7308" type="number" step="0.0001" value="40.7308" />
+        <input class="coord-input" id="lng-input" placeholder="Lng: -73.9973" type="number" step="0.0001" value="-73.9973" />
+      </div>
+      <div class="radius-row">
+        <span class="radius-label">Radius: <span class="radius-val" id="radius-display">200</span>m</span>
+        <input type="range" id="radius-slider" min="50" max="1000" step="50" value="200"
+          oninput="document.getElementById('radius-display').textContent=this.value" />
+      </div>
+      <button class="search-btn" style="width:100%;margin-top:10px" onclick="fetchCurbRules()">
+        Query Live Rules
+      </button>
+      <button class="search-btn" style="width:100%;margin-top:8px;background:linear-gradient(135deg,#1a2a30,#1a2a30);color:var(--cyan);border:1px solid var(--border-hi)" onclick="useMyLocation()">
+        📍 Use My Location
+      </button>
+    </div>
+
+    <!-- Rules Stats Mini -->
+    <div class="panel-section">
+      <div class="panel-label">Rules In View</div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-val red" id="rules-active">—</div>
+          <div class="stat-key">Active Now</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val green" id="rules-legal">—</div>
+          <div class="stat-key">Legal Now</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Curb Rules List -->
+    <div class="panel-section" style="flex:1">
+      <div class="panel-label">Parking Rules</div>
+      <div id="rules-list">
+        <div class="empty-state">
+          <div class="empty-icon">🗺️</div>
+          <div>Enter coords and query<br>to see live rules</div>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ── FOOTER ─────────────────────────────────────────────── -->
+  <footer>
+    <div class="footer-stat">
+      DATA <span id="footer-coverage">NYC</span>
+    </div>
+    <div id="fact-ticker">
+      <span id="fact-text">Loading Ekstra network facts…</span>
+    </div>
+    <div class="footer-stat">
+      API <span>v0.1</span> &nbsp;|&nbsp; <span class="pulse-dot" style="width:5px;height:5px"></span>&nbsp; <span style="color:var(--green)">LIVE</span>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   EKSTRA CITY INTELLIGENCE — DATA STARTER
+   Consumes: /api/v1/network/devices · /api/v1/network/stats
+             /api/v1/curb-rules/near · /api/v1/platform/facts
+   Auth: None required (public endpoints)
+   Base: https://ekstra.ai
+═══════════════════════════════════════════════════════════════ */
+
+const BASE = 'https://ekstra.ai';
+let map, allDevices = [], deviceMarkers = [], ruleMarkers = [], ruleCircle;
+let activeFilter = 'all';
+
+/* ── CLOCK ────────────────────────────────────────────────────── */
+function updateClock() {
+  const now = new Date();
+  document.getElementById('clock').textContent =
+    now.toUTCString().slice(17, 25) + ' UTC';
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+/* ── MAP INIT ─────────────────────────────────────────────────── */
+function initMap() {
+  map = L.map('map', {
+    center: [40.7308, -73.9973],
+    zoom: 13,
+    zoomControl: true,
+    attributionControl: false,
+  });
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+  }).addTo(map);
+
+  // Click map to update coords
+  map.on('click', (e) => {
+    document.getElementById('lat-input').value = e.latlng.lat.toFixed(5);
+    document.getElementById('lng-input').value = e.latlng.lng.toFixed(5);
+  });
+}
+
+/* ── NETWORK STATS ────────────────────────────────────────────── */
+async function fetchStats() {
+  try {
+    const r = await fetch(`${BASE}/api/v1/network/stats`);
+    const { stats } = await r.json();
+    animateNumber('stat-devices', parseInt(stats.active_devices));
+    animateNumber('stat-operators', parseInt(stats.operators));
+    document.getElementById('stat-packets').textContent =
+      parseInt(stats.total_packets).toLocaleString();
+  } catch (e) {
+    ['stat-devices','stat-operators','stat-packets'].forEach(id =>
+      document.getElementById(id).textContent = 'N/A'
+    );
+  }
+}
+
+function animateNumber(id, target) {
+  const el = document.getElementById(id);
+  let current = 0;
+  const step = Math.max(1, Math.floor(target / 40));
+  const interval = setInterval(() => {
+    current = Math.min(current + step, target);
+    el.textContent = current.toLocaleString();
+    if (current >= target) clearInterval(interval);
+  }, 30);
+}
+
+/* ── DEVICES ──────────────────────────────────────────────────── */
+async function fetchDevices() {
+  try {
+    const r = await fetch(`${BASE}/api/v1/network/devices?limit=200`);
+    const { devices } = await r.json();
+    allDevices = devices || [];
+    renderDeviceList(allDevices);
+    renderDeviceMarkers(allDevices);
+  } catch (e) {
+    document.getElementById('device-list').innerHTML =
+      `<div class="empty-state"><div class="empty-icon">⚠️</div><div>Could not reach Ekstra API</div></div>`;
+  }
+}
+
+function filterDevices(type, el) {
+  document.querySelectorAll('.type-chip').forEach(c => c.classList.remove('active-chip'));
+  el.classList.add('active-chip');
+  activeFilter = type;
+  const filtered = type === 'all' ? allDevices :
+    allDevices.filter(d => d.device_type === type);
+  renderDeviceList(filtered);
+  renderDeviceMarkers(filtered);
+}
+
+function getDeviceColor(type) {
+  return { camera: '#63dcff', screen: '#c47bff', phone_imu: '#ff7c3a' }[type] || '#5a6478';
+}
+
+function renderDeviceList(devices) {
+  const el = document.getElementById('device-list');
+  if (!devices.length) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">📡</div><div>No devices found</div></div>`;
+    return;
+  }
+  el.innerHTML = devices.slice(0, 30).map(d => `
+    <div class="device-item" onclick="flyToDevice(${d.latitude},${d.longitude},'${d.device_id}')">
+      <div class="device-dot ${d.device_type || 'default'}"></div>
+      <div class="device-info">
+        <div class="device-name">${d.location_hint || d.device_id?.slice(0,16) || 'Unknown'}</div>
+        <div class="device-loc">${d.device_type || '—'} · trust ${((d.trust_score||0)*100).toFixed(0)}%</div>
+      </div>
+      <div class="device-trust">${d.attestation_level ?? '?'}</div>
+    </div>
+  `).join('');
+}
+
+function renderDeviceMarkers(devices) {
+  deviceMarkers.forEach(m => map.removeLayer(m));
+  deviceMarkers = [];
+  devices.forEach(d => {
+    if (!d.latitude || !d.longitude) return;
+    const color = getDeviceColor(d.device_type);
+    const marker = L.circleMarker([d.latitude, d.longitude], {
+      radius: 6,
+      fillColor: color,
+      color: color,
+      weight: 1,
+      opacity: 0.9,
+      fillOpacity: 0.8,
+    });
+    marker.bindPopup(`
+      <b style="color:${color}">${d.location_hint || 'Device'}</b><br>
+      Type: ${d.device_type || '—'}<br>
+      Trust: ${((d.trust_score||0)*100).toFixed(0)}%<br>
+      Attestation: ${d.attestation_level ?? '?'}<br>
+      <span style="color:#5a6478;font-size:9px">${d.motion_address?.slice(0,20) || ''}…</span>
+    `);
+    marker.addTo(map);
+    deviceMarkers.push(marker);
+  });
+}
+
+function flyToDevice(lat, lng, id) {
+  if (!lat || !lng) return;
+  map.flyTo([lat, lng], 15, { duration: 1.2 });
+}
+
+/* ── CURB RULES ───────────────────────────────────────────────── */
+async function fetchCurbRules() {
+  const lat = parseFloat(document.getElementById('lat-input').value) || 40.7308;
+  const lng = parseFloat(document.getElementById('lng-input').value) || -73.9973;
+  const radius = parseInt(document.getElementById('radius-slider').value) || 200;
+
+  document.getElementById('rules-list').innerHTML =
+    `<div class="empty-state"><div class="loading-dots">Querying</div></div>`;
+  document.getElementById('rules-active').textContent = '…';
+  document.getElementById('rules-legal').textContent = '…';
+
+  // Fly map to location
+  map.flyTo([lat, lng], 15, { duration: 1.2 });
+
+  // Draw radius circle
+  if (ruleCircle) map.removeLayer(ruleCircle);
+  ruleMarkers.forEach(m => map.removeLayer(m));
+  ruleMarkers = [];
+  ruleCircle = L.circle([lat, lng], {
+    radius,
+    color: '#63dcff',
+    fillColor: '#63dcff',
+    fillOpacity: 0.04,
+    weight: 1,
+    dashArray: '4 4',
+  }).addTo(map);
+
+  try {
+    const r = await fetch(
+      `${BASE}/api/v1/curb-rules/near?lat=${lat}&lng=${lng}&radius_m=${radius}`
+    );
+    const { rules } = await r.json();
+    const activeNow = (rules || []).filter(r => r.active_now);
+    const legal = (rules || []).filter(r => !r.active_now);
+
+    document.getElementById('rules-active').textContent = activeNow.length;
+    document.getElementById('rules-legal').textContent = legal.length;
+
+    renderRuleList(rules || []);
+    renderRuleMarkers(rules || []);
+  } catch (e) {
+    document.getElementById('rules-list').innerHTML =
+      `<div class="empty-state"><div class="empty-icon">⚠️</div><div>API unreachable</div></div>`;
+  }
+}
+
+function formatCountdown(rule) {
+  if (!rule.next_state_change_at) return '';
+  const diff = Math.max(0, Math.floor(
+    (new Date(rule.next_state_change_at) - Date.now()) / 60000
+  ));
+  if (diff < 60) return `${diff}min`;
+  return `${Math.floor(diff/60)}h ${diff%60}m`;
+}
+
+function renderRuleList(rules) {
+  const el = document.getElementById('rules-list');
+  if (!rules.length) {
+    el.innerHTML = `<div class="empty-state"><div class="empty-icon">✅</div><div>No rules in this radius</div></div>`;
+    return;
+  }
+  el.innerHTML = rules.slice(0, 25).map(r => {
+    const state = r.active_now ? 'active' : 'inactive';
+    const badge = r.active_now ? 'RESTRICTED' : 'LEGAL';
+    const countdown = formatCountdown(r);
+    const street = r.details?.on_street || '';
+    return `
+    <div class="rule-item ${state}">
+      <div class="rule-header">
+        <div class="rule-kind ${state}">${r.kind?.replace(/_/g,' ') || 'rule'}</div>
+        <div class="rule-badge ${state}">${badge}</div>
+      </div>
+      <div class="rule-text">${r.raw_text || street || '—'}</div>
+      ${countdown ? `<div class="rule-countdown">Changes in <span>${countdown}</span></div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function renderRuleMarkers(rules) {
+  ruleMarkers.forEach(m => map.removeLayer(m));
+  ruleMarkers = [];
+  rules.forEach(r => {
+    if (!r.latitude || !r.longitude) return;
+    const color = r.active_now ? '#ff4b6e' : '#2dffb4';
+    const m = L.circleMarker([r.latitude, r.longitude], {
+      radius: 5,
+      fillColor: color,
+      color: color,
+      weight: 1,
+      opacity: 0.9,
+      fillOpacity: 0.7,
+    });
+    m.bindPopup(`
+      <b style="color:${color}">${r.active_now ? '🔴 RESTRICTED' : '🟢 LEGAL'}</b><br>
+      ${r.raw_text || r.kind || '—'}<br>
+      ${r.details?.on_street ? `Street: ${r.details.on_street}<br>` : ''}
+      ${formatCountdown(r) ? `Changes in: ${formatCountdown(r)}` : ''}
+    `);
+    m.addTo(map);
+    ruleMarkers.push(m);
+  });
+}
+
+function useMyLocation() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(pos => {
+    document.getElementById('lat-input').value = pos.coords.latitude.toFixed(5);
+    document.getElementById('lng-input').value = pos.coords.longitude.toFixed(5);
+    fetchCurbRules();
+  });
+}
+
+/* ── PLATFORM FACTS TICKER ────────────────────────────────────── */
+async function fetchFacts() {
+  try {
+    const r = await fetch(`${BASE}/api/v1/platform/facts?kind=fact`);
+    const { facts } = await r.json();
+    if (facts?.length) {
+      const texts = facts.map(f => f.body).join('   ·   ');
+      document.getElementById('fact-text').textContent = texts;
+    }
+  } catch (e) {
+    document.getElementById('fact-text').textContent =
+      'Ekstra — Real-time motion, presence, and spatial intelligence network';
+  }
+}
+
+/* ── BOOT ─────────────────────────────────────────────────────── */
+window.addEventListener('DOMContentLoaded', () => {
+  initMap();
+  fetchStats();
+  fetchDevices();
+  fetchFacts();
+
+  // Auto-refresh stats every 30s
+  setInterval(fetchStats, 30000);
+  // Auto-refresh devices every 60s
+  setInterval(fetchDevices, 60000);
+});
+</script>
+</body>
+</html>
+
